@@ -196,29 +196,37 @@ class AmongUsModel(Model):
                     self.process_vote(agent, argument)
 
         self.phase = "voting"
+        self.discussion_time = 5  # Reset timer for voting phase
         print(f"Collected {len(self.message_queue)} messages")
 
     def process_vote(self, agent, argument):
-        """Weight votes based on message credibility"""
+        """Each agent can cast one vote or skip."""
         try:
-            suspect_id = int(re.search(r'\d+', str(argument["suspect"])).group())
-            weight = 1.5 if isinstance(agent, Crewmate) else 0.8  # Crewmates get more weight
-            self.votes[suspect_id] = self.votes.get(suspect_id, 0) + weight
+            # Only allow one vote per agent per round
+            if hasattr(agent, '_has_voted') and agent._has_voted:
+                return
+            suspect_id = int(re.search(r'\d+', str(argument["suspect"])).group()) if re.search(r'\d+', str(argument["suspect"])) else -1
+            if suspect_id != -1 and any(a.unique_id == suspect_id for a in self.schedule.agents if a.alive):
+                self.votes[suspect_id] = self.votes.get(suspect_id, 0) + 1
+            # Mark agent as having voted this round
+            agent._has_voted = True
         except Exception:
             pass
 
     def reset_round(self):
-        """Reset round and clear voting data"""
+        """Reset round and clear voting data, and allow agents to vote again."""
         self.phase = "tasks"
         self.reported_body = None
         self.votes = {}  # Now resetting votes each round
-        self.discussion_time = 0
+        self.discussion_time = 0  # Explicitly reset timer
         # Cleanup dead agents (safety net)
         for agent in self.schedule.agents:
             if isinstance(agent, Crewmate) and hasattr(agent, '_trace_file'):
                 agent._trace_file.close()
                 del agent._trace_file  # Ensures re-initialization next round
-
+            # Reset voting flag for all agents
+            if hasattr(agent, '_has_voted'):
+                del agent._has_voted
         for agent in list(self.schedule.agents):  # Use list() to avoid iteration issues
             if not agent.alive:
                 self.grid.remove_agent(agent)
