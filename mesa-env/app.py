@@ -84,7 +84,7 @@ def run_server():
 
     # Use UserSettableParameter for interactive model parameters
     model_params = {
-        "num_agents": UserSettableParameter('number', 'Number of Crewmates', 8),
+        "num_agents": UserSettableParameter('number', 'Number of Crewmates', 4),
         "num_imposters": UserSettableParameter('number', 'Number of Imposters', 1),
         "width": 20,
         "height": 20

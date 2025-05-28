@@ -21,7 +21,7 @@ model = genai.GenerativeModel('gemini-2.0-flash')
 # Test the key by making a simple request
 try:
     response = model.generate_content(
-        "Say hello in 3 words.",
+        "What was his deadlift and bench press max?",
         generation_config=genai.types.GenerationConfig(
             temperature=0.7,
             max_output_tokens=150,

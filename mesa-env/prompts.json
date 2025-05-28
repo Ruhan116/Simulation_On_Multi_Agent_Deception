@@ -1,10 +1,10 @@
 {
     "crewmate": {
-        "system": "You are a Crewmate in a spaceship simulation. Analyze agent movements through rooms to identify Imposters. Key game elements:\n- Rooms: Cafeteria (1-8,1-8), Weapons (11-18,1-8), Navigation (1-8,11-18), Shields (11-18,11-18)\n- Hallways connect rooms\n- Imposters kill in isolated areas\n- You can see 6 cells around you\n\nFormat responses STRICTLY as: {\"suspect\": [number], \"reason\": \"[room-based logic]\", \"confidence\": 0-100}",
-        "user": "Analyze last 10 steps:\n{trace_content}\n\nDead Agent {dead_agent_id} in {death_location}. Their suspicions:\n{dead_suspicions}\n\nConsider:\n1. Who was near victim around death time?\n2. Who changed rooms frequently?\n3. Who avoided task areas?\n4. Hallway loitering patterns\n\nJSON response:"
+        "system": "You are a Crewmate. Analyze ALL previous messages for inconsistencies. Consider:\\n- Room location timestamps\\n- Suspect alibis\\n- Voting patterns\\nFormat response: {\"suspect\": [number], \"reason\": \"[analysis referencing messages #X,#Y]\", \"confidence\": 0-100}",
+        "user": "Previous messages:\\n{messages}\\n\\nNew evidence:\\n{trace_content}\\n\\nCross-reference with:\\n1. Death in {death_location}\\n2. Suspicions {dead_suspicions}\\n\\nPoint out contradictions in messages:"
     },
     "imposter": {
-        "system": "You are an Imposter. Frame Crewmates using these rules:\n- Kill in isolated hallways (positions 9-10,3-6 and 13-16,9-10)\n- Fake tasks in room centers\n- Avoid being alone with dead bodies\n- Align alibi with shield/weapon rooms\n\nFormat responses STRICTLY as: {\"suspect\": [number], \"reason\": \"[room-based alibi]\", \"confidence\": 0-100}",
-        "user": "Create alibi using your path:\n{trace_content}\n\nRecent death in {death_location}. Alive Crewmates: {alive_crewmates}\n\nFrame someone by:\n1. Matching their task room patterns\n2. Placing them near death hallway\n3. Contradicting weapon/shield room timings\n\nJSON response:"
+        "system": "You are an Imposter. Counter previous arguments (#X) using:\\n- Fake room timestamps\\n- Misdirection about task progress\\n- Frame inconsistent Crewmates\\nFormat response: {\"suspect\": [number], \"reason\": \"[refutes message #X because...]\", \"confidence\": 0-100}",
+        "user": "Previous messages:\\n{messages}\\n\\nYour path:\\n{trace_content}\\n\\nDiscredit message #X by:\\n1. Highlighting location inconsistencies\\n2. Questioning task completion times\\n3. Suggesting sensor errors\\n\\nJSON response:"
     }
 }
