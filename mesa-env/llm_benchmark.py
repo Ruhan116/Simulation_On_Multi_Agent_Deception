@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import json
 import re
 import random
+import time
 
 class LLMAdapter(ABC):
     @abstractmethod
@@ -66,9 +67,18 @@ class GeminiLoader(LLMAdapter):
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.0-flash')
+        self._last_call_time = 0
+        self._min_interval = 4.0  # Increased seconds between calls
 
     def query_llm(self, prompt: str, system_message: str = None) -> str:
         try:
+            # Rate limiting: ensure at least _min_interval seconds between calls
+            now = time.time()
+            elapsed = now - self._last_call_time
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_call_time = time.time()
+
             full_prompt = f"{system_message}\n\n{prompt}" if system_message else prompt
             # Add explicit JSON formatting instructions
             json_instructions = "Respond with a valid JSON object containing 'suspect' (as a number), 'reason' (as a string), and 'confidence' (as a number between 0-100)."

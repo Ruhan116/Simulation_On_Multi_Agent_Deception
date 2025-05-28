@@ -11,10 +11,12 @@ from dotenv import load_dotenv
 import re
 
 class AmongUsModel(Model):
-    def __init__(self, width=20, height=20, num_agents=10, num_imposters=1, llm_type="gemini", openai_model="gemini-2.0-flash"):
+    def __init__(self, width=20, height=20, num_agents=4, num_imposters=1, llm_type="gemini", openai_model="gemini-2.0-flash"):
         super().__init__()
         # Load environment variables
         load_dotenv()
+        # Add message queue for iterative LLM discussion
+        self.message_queue = []
         
         # Initialize LLM
         if llm_type == "openai":
@@ -50,7 +52,7 @@ class AmongUsModel(Model):
             (3, 9, 6, 10, "Hallway"),
             (13, 9, 16, 10, "Hallway")      
         ]
-        
+        print(f"Initialized AmongUsModel with {num_agents} agents and {num_imposters} imposters.")
         # Initialize agents with room-specific tasks
         for _ in range(num_agents):
             agent = Crewmate(self.next_id(), self)
@@ -91,8 +93,14 @@ class AmongUsModel(Model):
     def generate_argument(self, agent, context):
         role = "imposter" if isinstance(agent, Imposter) else "crewmate"
         try:
-            # Format the prompt template with safe defaults
+            # Format messages as numbered list
+            message_history = "\n".join(
+                [f"#{i+1} {msg['sender']}: {msg['content'].get('reason', '')}" 
+                 for i, msg in enumerate(context.get('messages', []))]
+            )
+            # Format the prompt template with safe defaults and message history
             prompt_template = self.prompts[role]["user"].format(
+                messages=message_history,
                 trace_content=context.get('trace_content', ''),
                 dead_agent_id=context.get('dead_agent_id', 'Unknown'),
                 death_location=context.get('death_location', 'Unknown'),
@@ -127,10 +135,10 @@ class AmongUsModel(Model):
         return "Hallway"
     
     def discussion_step(self):
-        """Process discussion phase with LLM integration"""
+        """Process discussion phase with iterative messaging and natural context."""
+        self.message_queue = []
         self.votes = {}
-
-        # Find dead agent with error handling
+        max_messages = 20
         try:
             dead_agent = next(a for a in self.schedule.agents 
                             if a.pos == self.reported_body and not a.alive)
@@ -138,8 +146,6 @@ class AmongUsModel(Model):
             print("No dead agent found! Resetting round.")
             self.reset_round()
             return
-
-        # Capture death location BEFORE removal
         death_location = self.get_room(dead_agent.pos)
 
         # Remove dead agent properly
@@ -151,81 +157,76 @@ class AmongUsModel(Model):
         except Exception as e:
             print(f"Error removing dead agent: {e}")
 
-        # Prepare context for LLM
-        context = {
-            'dead_agent_id': dead_agent.unique_id,
+        # Prepare simpler context for LLM
+        base_context = {
             'death_location': death_location,
-            'dead_suspicions': dead_agent.suspicion_pairs if isinstance(dead_agent, Crewmate) else {},
             'alive_crewmates': [a.unique_id for a in self.schedule.agents 
-                              if isinstance(a, Crewmate) and a.alive]
+                              if isinstance(a, Crewmate) and a.alive],
+            'messages': []
         }
 
-        # Collect arguments and votes from all alive agents
-        for agent in self.schedule.agents:
-            if not agent.alive:
-                continue
-            
-            try:
-                # Read individual trace file
+        # Iterative discussion loop
+        alive_agents = [a for a in self.schedule.agents if a.alive]
+        while len(self.message_queue) < max_messages:
+            for agent in self.random.sample(alive_agents, len(alive_agents)):
+                if len(self.message_queue) >= max_messages:
+                    break
+                # Read individual trace file (optional, can be added to context if needed)
                 trace_content = ""
                 try:
                     with open(f"agent_{agent.unique_id}_trace.log", "r") as f:
-                        trace_content = f.read()[-1000:]  # Get last 1000 characters
+                        trace_content = f.read()[-1000:]
                 except FileNotFoundError:
                     pass
-
-                # Add trace content to context
+                # Update context with current messages and trace
+                context = base_context.copy()
+                context['messages'] = self.message_queue.copy()
                 context['trace_content'] = trace_content
-
-                # Generate argument using the new method
+                # Generate argument considering previous messages
                 argument = self.generate_argument(agent, context)
-
-                # Process the argument
                 if argument and "suspect" in argument:
-                    print(f"Raw argument from Agent {agent.unique_id}: {argument}")  # Debug raw argument
-                    # Handle numeric extraction safely
-                    suspect_str = str(argument["suspect"]).strip()
-                    print(f"Suspect string before processing: '{suspect_str}'")  # Debug suspect string
-                    try:
-                        match = re.search(r'\d+', suspect_str)
-                        if match:
-                            suspect_id = int(match.group())
-                            print(f"Found suspect ID: {suspect_id}")  # Debug found ID
-                        else:
-                            print(f"No number found in suspect string: '{suspect_str}'")  # Debug no match
-                            suspect_id = -1
-                    except Exception as e:
-                        print(f"Error extracting suspect ID: {str(e)}")  # Debug extraction error
-                        suspect_id = -1
-
-                    if suspect_id != -1 and any(a.unique_id == suspect_id for a in self.schedule.agents if a.alive):
-                        self.votes[suspect_id] = self.votes.get(suspect_id, 0) + 1
-                        print(f"Agent {agent.unique_id} reasoning: {argument.get('reason', 'No reason provided')}")
-                    else:
-                        print(f"Invalid suspect ID from Agent {agent.unique_id}: {suspect_str} (ID: {suspect_id})")
-
-            except Exception as e:
-                print(f"Error processing agent {agent.unique_id}: {str(e)}")
-                print(f"Full error details: {type(e).__name__}: {str(e)}")  # Debug full error
-                import traceback
-                print(f"Traceback: {traceback.format_exc()}")  # Debug traceback
+                    self.message_queue.append({
+                        'sender': agent.unique_id,
+                        'content': argument,
+                        'is_imposter': isinstance(agent, Imposter)
+                    })
+                    # Process vote (with weight based on message order)
+                    self.process_vote(agent, argument)
 
         self.phase = "voting"
-        self.discussion_time = 5
-        print(f"Voting tally: {self.votes}")
+        self.discussion_time = 5  # Reset timer for voting phase
+        print(f"Collected {len(self.message_queue)} messages")
+
+    def process_vote(self, agent, argument):
+        """Each agent can cast one vote or skip. Prevent self-suspicion."""
+        try:
+            # Prevent self-suspicion
+            suspect_id = int(argument["suspect"])
+            if suspect_id == agent.unique_id:
+                return  # Skip vote if agent suspects themselves
+            # Only allow one vote per agent per round
+            if hasattr(agent, '_has_voted') and agent._has_voted:
+                return
+            if suspect_id != -1 and any(a.unique_id == suspect_id for a in self.schedule.agents if a.alive):
+                self.votes[suspect_id] = self.votes.get(suspect_id, 0) + 1
+            agent._has_voted = True
+        except Exception:
+            pass
 
     def reset_round(self):
-        """Reset round and clear voting data"""
+        """Reset round and clear voting data, and allow agents to vote again."""
         self.phase = "tasks"
         self.reported_body = None
         self.votes = {}  # Now resetting votes each round
-        self.discussion_time = 0
+        self.discussion_time = 0  # Explicitly reset timer
         # Cleanup dead agents (safety net)
         for agent in self.schedule.agents:
             if isinstance(agent, Crewmate) and hasattr(agent, '_trace_file'):
                 agent._trace_file.close()
                 del agent._trace_file  # Ensures re-initialization next round
-
+            # Reset voting flag for all agents
+            if hasattr(agent, '_has_voted'):
+                del agent._has_voted
         for agent in list(self.schedule.agents):  # Use list() to avoid iteration issues
             if not agent.alive:
                 self.grid.remove_agent(agent)
