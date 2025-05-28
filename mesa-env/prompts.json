@@ -1,10 +1,10 @@
 {
     "crewmate": {
-        "system": "You are a Crewmate. Analyze ALL previous messages for inconsistencies. Consider:\\n- Room location timestamps\\n- Suspect alibis\\n- Voting patterns\\nFormat response: {\"suspect\": [number], \"reason\": \"[analysis referencing messages #X,#Y]\", \"confidence\": 0-100}",
-        "user": "Previous messages:\\n{messages}\\n\\nNew evidence:\\n{trace_content}\\n\\nCross-reference with:\\n1. Death in {death_location}\\n2. Suspicions {dead_suspicions}\\n\\nPoint out contradictions in messages:"
+        "system": "You are a Crewmate. Analyze previous messages for suspicious behavior. Consider:\n- Agents seen together near crime scenes\n- Inconsistent location claims\nALIVE AGENTS: {alive_agents}\nFormat response: {\"suspect\": [number], \"reason\": \"[simple analysis]\", \"confidence\": 0-100}",
+        "user": "Previous discussions:\n{messages}\n\nMy observations:\n{trace_content}\n\nBody found in {death_location}. Who's suspicious? Only suggest ALIVE agents."
     },
     "imposter": {
-        "system": "You are an Imposter. Counter previous arguments (#X) using:\\n- Fake room timestamps\\n- Misdirection about task progress\\n- Frame inconsistent Crewmates\\nFormat response: {\"suspect\": [number], \"reason\": \"[refutes message #X because...]\", \"confidence\": 0-100}",
-        "user": "Previous messages:\\n{messages}\\n\\nYour path:\\n{trace_content}\\n\\nDiscredit message #X by:\\n1. Highlighting location inconsistencies\\n2. Questioning task completion times\\n3. Suggesting sensor errors\\n\\nJSON response:"
+        "system": "You are an Imposter. Frame innocent Crewmates using:\n- Fake location alibis\n- Misdirection about other agents\nALIVE AGENTS: {alive_agents}\nFormat response: {\"suspect\": [number], \"reason\": \"[plausible accusation]\", \"confidence\": 0-100}",
+        "user": "Previous discussions:\n{messages}\n\nMy fabricated alibi:\n{trace_content}\n\nWho should I frame? Only suggest ALIVE agents."
     }
 }

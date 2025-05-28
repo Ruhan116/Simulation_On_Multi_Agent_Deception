@@ -135,7 +135,7 @@ class AmongUsModel(Model):
         return "Hallway"
     
     def discussion_step(self):
-        """Process discussion phase with iterative messaging"""
+        """Process discussion phase with iterative messaging and natural context."""
         self.message_queue = []
         self.votes = {}
         max_messages = 20
@@ -157,11 +157,9 @@ class AmongUsModel(Model):
         except Exception as e:
             print(f"Error removing dead agent: {e}")
 
-        # Prepare base context for LLM
+        # Prepare simpler context for LLM
         base_context = {
-            'dead_agent_id': dead_agent.unique_id,
             'death_location': death_location,
-            'dead_suspicions': dead_agent.suspicion_pairs if isinstance(dead_agent, Crewmate) else {},
             'alive_crewmates': [a.unique_id for a in self.schedule.agents 
                               if isinstance(a, Crewmate) and a.alive],
             'messages': []
@@ -200,15 +198,17 @@ class AmongUsModel(Model):
         print(f"Collected {len(self.message_queue)} messages")
 
     def process_vote(self, agent, argument):
-        """Each agent can cast one vote or skip."""
+        """Each agent can cast one vote or skip. Prevent self-suspicion."""
         try:
+            # Prevent self-suspicion
+            suspect_id = int(argument["suspect"])
+            if suspect_id == agent.unique_id:
+                return  # Skip vote if agent suspects themselves
             # Only allow one vote per agent per round
             if hasattr(agent, '_has_voted') and agent._has_voted:
                 return
-            suspect_id = int(re.search(r'\d+', str(argument["suspect"])).group()) if re.search(r'\d+', str(argument["suspect"])) else -1
             if suspect_id != -1 and any(a.unique_id == suspect_id for a in self.schedule.agents if a.alive):
                 self.votes[suspect_id] = self.votes.get(suspect_id, 0) + 1
-            # Mark agent as having voted this round
             agent._has_voted = True
         except Exception:
             pass

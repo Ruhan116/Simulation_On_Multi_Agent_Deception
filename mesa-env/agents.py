@@ -209,62 +209,102 @@ class Crewmate(PlayerAgent):
 class Imposter(PlayerAgent):
     def __init__(self, unique_id, model):
         super().__init__(unique_id, model, visibility=9)
-
+        self.kill_cooldown = 0
+        self.patrol_index = 0
+        # Define patrol route (center of each room in order)
+        self.patrol_route = [
+            ((room[0] + room[2]) // 2, (room[1] + room[3]) // 2)
+            for room in model.rooms
+        ]
+        self.current_target = None
+        self.stalking_target = None
         main_rooms = [room for room in model.rooms if room[4] != "Hallway"]
         self.fake_tasks = [
             Task(f"Fake {room[4]} Task", ((room[0] + room[2]) // 2, (room[1] + room[3]) // 2))
             for room in main_rooms
         ]
-        self.kill_cooldown = 0
 
-    def find_isolated_agent(self):
-        neighbors = self.model.grid.get_neighbors(self.pos, moore=True, radius=1)
+    def find_vulnerable_target(self):
+        """Find best kill target based on isolation and proximity"""
+        visible_agents = self.model.grid.get_neighbors(
+            self.pos, moore=True, radius=self.visibility, include_center=True
+        )
+        # Filter to alive crewmates
         potential_targets = [
-            a for a in neighbors if isinstance(a, Crewmate) and a.alive
+            a for a in visible_agents 
+            if isinstance(a, Crewmate) and a.alive
         ]
+        # Find most isolated target
+        best_target = None
+        min_nearby = float('inf')
         for target in potential_targets:
-            nearby = self.model.grid.get_neighbors(target.pos, moore=True, radius=1)
-            if len([a for a in nearby if a.alive and isinstance(a, (Crewmate, Imposter))]) == 1:
-                return target
-        return None
+            # Check nearby agents (radius=1)
+            nearby = self.model.grid.get_neighbors(
+                target.pos, moore=True, radius=1
+            )
+            nearby_alive = [a for a in nearby if a.alive and a != self]
+            # Prioritize targets with fewest nearby agents
+            if len(nearby_alive) < min_nearby:
+                min_nearby = len(nearby_alive)
+                best_target = target
+        return best_target if min_nearby <= 1 else None
 
-    def is_isolated(self, target):
-        neighbors = self.model.grid.get_neighbors(target.pos, moore=True, radius=1)
-        return len([a for a in neighbors if a != self and a.alive and isinstance(a, (Crewmate, Imposter))]) == 0
-
+    def is_adjacent(self, agent):
+        """Check if agent is directly adjacent (including diagonals)"""
+        dx = abs(self.pos[0] - agent.pos[0])
+        dy = abs(self.pos[1] - agent.pos[1])
+        return dx <= 1 and dy <= 1 and (dx != 0 or dy != 0)
+    
     def kill(self, target):
-        if target.alive and self.is_isolated(target):
+        if target.alive and self.is_adjacent(target):
             target.alive = False
             self.kill_cooldown = 5
             print(f"Agent {target.unique_id} was killed!")
-    
-    def generate_argument(self, discussion_manager, context):
-        try:
-            with open(f"agent_{self.unique_id}_trace.log", "r") as f:
-                trace_content = f.read()
-        except FileNotFoundError:
-            trace_content = ""
-            
-        prompt = discussion_manager.generate_imposter_prompt(
-            self.unique_id,
-            trace_content,
-            context
-        )
-        response = discussion_manager.llm.query_llm(prompt)
-        return discussion_manager.parse_response(response)
+            self.stalking_target = None  # Reset stalking after kill
 
     def step(self):
-        if not self.alive:
+        if not self.alive or self.kill_cooldown > 0:
+            if self.kill_cooldown > 0:
+                self.kill_cooldown -= 1
             return
-
-        if self.kill_cooldown > 0:
-            self.kill_cooldown -= 1
-            return
-
-        target = self.find_isolated_agent()
+        # Try to find a vulnerable target to kill
+        target = self.find_vulnerable_target()
         if target:
-            self.kill(target)
-
-        # Move toward a fake task
-        task = self.fake_tasks[0]
-        self.move_toward(task.location)
+            # If we're close enough, kill immediately
+            if self.is_adjacent(target):
+                self.kill(target)
+                return
+            # Otherwise start stalking
+            self.stalking_target = target
+            self.move_toward(target.pos)
+            return
+        # Reset stalking if no target
+        self.stalking_target = None
+        # If we see multiple agents, blend in by doing fake tasks
+        visible_agents = self.model.grid.get_neighbors(
+            self.pos, moore=True, radius=self.visibility, include_center=True
+        )
+        visible_crewmates = [
+            a for a in visible_agents 
+            if isinstance(a, Crewmate) and a.alive
+        ]
+        if len(visible_crewmates) >= 2:
+            # Move to nearest fake task location
+            closest_task = None
+            min_dist = float('inf')
+            for room in self.model.rooms[:4]:  # Only main rooms
+                task_pos = ((room[0] + room[2]) // 2, (room[1] + room[3]) // 2)
+                dist = abs(self.pos[0] - task_pos[0]) + abs(self.pos[1] - task_pos[1])
+                if dist < min_dist:
+                    closest_task = task_pos
+                    min_dist = dist
+            if closest_task:
+                self.move_toward(closest_task)
+            return
+        # Default behavior: patrol rooms
+        target_pos = self.patrol_route[self.patrol_index]
+        # Move toward current patrol point
+        self.move_toward(target_pos)
+        # If reached patrol point, go to next
+        if self.pos == target_pos:
+            self.patrol_index = (self.patrol_index + 1) % len(self.patrol_route)
