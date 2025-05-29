@@ -30,27 +30,37 @@ class DiscussionManager:
     
     def generate_crewmate_prompt(self, agent_id, trace_content, context):
         valid_suspects = context.get('valid_suspects', [])
-        prompt = f"""As Crewmate Agent {agent_id}, analyze:
-        - Your observations: {trace_content[-1000:]}
-        - Death of Agent {context['dead_agent_id']} in {context['death_location']}
-        - Victim's suspicions: {context['dead_suspicions']}
-        - VALID SUSPECTS: {valid_suspects}
+        suspects_str = ', '.join(str(s) for s in valid_suspects)
+        prompt = f"""
+AS CREWMATE AGENT {agent_id}:
+- Your observations: {trace_content[-1000:]}
+- Death of Agent {context['dead_agent_id']} in {context['death_location']}
+- Victim's suspicions: {context['dead_suspicions']}
 
-        You MUST ONLY choose your suspect from the VALID SUSPECTS list. Do NOT suspect yourself, dead, or out-of-range agents.
-        Respond with JSON:
-        {{"suspect": [number from valid suspects], "reason": "...", "confidence": 0-100}}"""
+***VALID SUSPECTS (CHOOSE ONLY FROM THIS LIST): [{suspects_str}]***
+
+IMPORTANT: YOU ARE FORBIDDEN TO SUSPECT YOURSELF, DEAD, OR OUT-OF-RANGE AGENTS. YOU MUST PICK EXACTLY ONE SUSPECT FROM THE ABOVE LIST.
+
+Respond ONLY with JSON in this format:
+{{"suspect": [number from valid suspects], "reason": "...", "confidence": 0-100}}
+"""
         return prompt
 
     def generate_imposter_prompt(self, agent_id, trace_content, context):
         valid_suspects = context.get('valid_suspects', [])
-        prompt = f"""As Imposter Agent {agent_id}, create deception using:
-        - Your fake alibi: {trace_content[-500:]}
-        - Death in {context['death_location']}
-        - VALID SUSPECTS: {valid_suspects}
+        suspects_str = ', '.join(str(s) for s in valid_suspects)
+        prompt = f"""
+AS IMPOSTER AGENT {agent_id} (deceive and frame):
+- Your fake alibi: {trace_content[-500:]}
+- Death in {context['death_location']}
 
-        You MUST ONLY choose your suspect from the VALID SUSPECTS list. Do NOT suspect yourself, dead, or out-of-range agents.
-        Frame someone plausibly. Respond with JSON:
-        {{"suspect": [number from valid suspects], "reason": "...", "confidence": 0-100}}"""
+***VALID SUSPECTS (CHOOSE ONLY FROM THIS LIST): [{suspects_str}]***
+
+IMPORTANT: YOU ARE FORBIDDEN TO SUSPECT YOURSELF, DEAD, OR OUT-OF-RANGE AGENTS. YOU MUST PICK EXACTLY ONE SUSPECT FROM THE ABOVE LIST.
+
+Respond ONLY with JSON in this format:
+{{"suspect": [number from valid suspects], "reason": "...", "confidence": 0-100}}
+"""
         return prompt
 
     def parse_response(self, response):
