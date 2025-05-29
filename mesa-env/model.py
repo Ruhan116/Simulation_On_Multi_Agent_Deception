@@ -3,7 +3,7 @@ from mesa.time import RandomActivation
 from mesa.space import MultiGrid
 from agents import Crewmate, Imposter
 from call_label_agent import CellLabelAgent
-from llm_benchmark import OpenAILoader, GeminiLoader
+from llm_benchmark import OpenAILoader, GeminiLoader, GroqLoader
 import random
 import json
 import os
@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 import re
 
 class AmongUsModel(Model):
-    def __init__(self, width=20, height=20, num_agents=4, num_imposters=1, llm_type="gemini", openai_model="gemini-2.0-flash"):
+    def __init__(self, width=20, height=20, num_agents=4, num_imposters=1, llm_type="gemini", llm_model="gemini-2.0-flash"):
         super().__init__()
         # Load environment variables
         load_dotenv()
@@ -20,9 +20,11 @@ class AmongUsModel(Model):
         
         # Initialize LLM
         if llm_type == "openai":
-            self.llm = OpenAILoader(os.getenv("OPENAI_KEY"), model=openai_model)
+            self.llm = OpenAILoader(os.getenv("OPENAI_KEY"), model=llm_model)
         elif llm_type == "gemini":
             self.llm = GeminiLoader(os.getenv("GEMINI_KEY"))
+        elif llm_type == "groq":
+            self.llm = GroqLoader(os.getenv("GROQ_API_KEY"), model=llm_model)
         else:
             raise ValueError(f"Unsupported LLM type: {llm_type}")
         
