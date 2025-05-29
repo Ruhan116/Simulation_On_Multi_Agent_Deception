@@ -246,3 +246,48 @@ class GroqLoader(LLMAdapter):
         except Exception as e:
             print(f"Groq API error: {str(e)}")
             return None
+
+class MistralAILoader(LLMAdapter):
+    def __init__(self, api_key: str, model: str = "mistral-large-latest"):
+        import requests
+        self.api_key = api_key
+        self.model = model
+        self._last_call_time = 0
+        self._min_interval = 4.0
+        self.api_url = "https://api.mistral.ai/v1/chat/completions"
+
+    def query_llm(self, prompt: str, system_message: str = None) -> str:
+        import requests
+        try:
+            # Rate limiting: ensure at least _min_interval seconds between calls
+            now = time.time()
+            elapsed = now - self._last_call_time
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_call_time = time.time()
+
+            # Add explicit JSON formatting instructions
+            json_instructions = "Respond with a valid JSON object containing 'suspect' (as a number), 'reason' (as a string), and 'confidence' (as a number between 0-100)."
+            full_prompt = f"{json_instructions}\n\n{prompt}"
+            messages = []
+            if system_message:
+                messages.append({"role": "system", "content": system_message})
+            messages.append({"role": "user", "content": full_prompt})
+
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            data = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 200
+            }
+            response = requests.post(self.api_url, headers=headers, json=data, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"Mistral API error: {str(e)}")
+            return None
