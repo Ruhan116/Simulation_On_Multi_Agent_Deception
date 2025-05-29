@@ -111,17 +111,28 @@ class AmongUsModel(Model):
                 [f"#{i+1} {msg['sender']}: {msg['content'].get('reason', '')}"
                  for i, msg in enumerate(context.get('messages', []))]
             )
+            # Prepare context for prompt
+            prompt_context = context.copy()
+            # Pass valid_suspects for both crewmate and imposter roles
+            prompt_context['valid_suspects'] = valid_suspects
+            if role == "imposter":
+                prompt_context['alive_agents'] = valid_suspects
             # Format the prompt template with safe defaults and message history
-            prompt_template = self.prompts[role]["user"].format(
-                messages=message_history,
-                trace_content=context.get('trace_content', ''),
-                dead_agent_id=context.get('dead_agent_id', 'Unknown'),
-                death_location=context.get('death_location', 'Unknown'),
-                dead_suspicions=context.get('dead_suspicions', {}),
-                alive_crewmates=context.get('alive_crewmates', [])
-            )
+            if role == "imposter" and hasattr(self.llm, 'generate_imposter_prompt'):
+                prompt_template = self.llm.generate_imposter_prompt(agent.unique_id, context.get('trace_content', ''), prompt_context)
+            elif role == "crewmate" and hasattr(self.llm, 'generate_crewmate_prompt'):
+                prompt_template = self.llm.generate_crewmate_prompt(agent.unique_id, context.get('trace_content', ''), prompt_context)
+            else:
+                prompt_template = self.prompts[role]["user"].format(
+                    messages=message_history,
+                    trace_content=context.get('trace_content', ''),
+                    dead_agent_id=context.get('dead_agent_id', 'Unknown'),
+                    death_location=context.get('death_location', 'Unknown'),
+                    dead_suspicions=context.get('dead_suspicions', {}),
+                    alive_crewmates=context.get('alive_crewmates', [])
+                )
             system_msg = self.prompts[role]["system"]
-            
+            #print(f"[DEBUG] LLM prompt for Agent {agent.unique_id} (role={role}):\n{prompt_template}\n")
             response = self.llm.query_llm(prompt_template, system_msg)
             parsed_response = self.llm.parse_response(response)
             if parsed_response:
@@ -217,7 +228,8 @@ class AmongUsModel(Model):
                 context['trace_content'] = trace_content
                 # Generate argument considering previous messages
                 argument = self.generate_argument(agent, context)
-                if argument and "suspect" in argument:
+                # Only add valid arguments (suspect != -1) to message_queue
+                if argument and "suspect" in argument and argument["suspect"] != -1:
                     self.message_queue.append({
                         'sender': agent.unique_id,
                         'content': argument,
@@ -225,6 +237,8 @@ class AmongUsModel(Model):
                     })
                     # Process vote (with weight based on message order)
                     self.process_vote(agent, argument)
+                else:
+                    print(f"[DEBUG] Excluded invalid response from Agent {agent.unique_id}: {argument}")
 
         self.phase = "voting"
         self.discussion_time = 5  # Reset timer for voting phase
