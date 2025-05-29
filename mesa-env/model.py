@@ -91,6 +91,7 @@ class AmongUsModel(Model):
                     self.grid.place_agent(label_agent, (x, y))
 
     def generate_argument(self, agent, context):
+        """Generate argument using robust prompts"""
         role = "imposter" if isinstance(agent, Imposter) else "crewmate"
         try:
             # Determine valid suspects BEFORE calling LLM
@@ -99,52 +100,45 @@ class AmongUsModel(Model):
             max_id = max(all_agent_ids) if all_agent_ids else 5
             valid_ids = set(range(min_id, max_id + 1))
             alive_ids = [a.unique_id for a in self.schedule.agents if a.alive]
-            # Exclude self from suspects
             valid_suspects = [uid for uid in alive_ids if uid != agent.unique_id and uid in valid_ids]
-            print(f"[DEBUG] Agent {agent.unique_id} valid suspects before LLM: {valid_suspects}")
             if not valid_suspects:
-                print(f"[DEBUG] No valid suspects for Agent {agent.unique_id}. Skipping LLM call.")
                 return {"suspect": -1, "reason": "No valid suspects available (all dead, self, or out of range)", "confidence": 0}
 
-            # Format messages as numbered list
-            message_history = "\n".join(
-                [f"#{i+1} {msg['sender']}: {msg['content'].get('reason', '')}"
-                 for i, msg in enumerate(context.get('messages', []))]
-            )
-            # Prepare context for prompt
-            prompt_context = context.copy()
-            # Pass valid_suspects for both crewmate and imposter roles
-            prompt_context['valid_suspects'] = valid_suspects
+            # Get agent's trace content
+            trace_content = ""
+            try:
+                with open(f"agent_{agent.unique_id}_trace.log", "r") as f:
+                    trace_content = f.read()[-1000:]
+            except FileNotFoundError:
+                pass
+
+            # Generate prompt using new methods
+            prompt_context = {
+                'valid_suspects': valid_suspects,
+                'messages': context.get('messages', []),
+                'death_location': context.get('death_location', 'Unknown'),
+                'dead_agent_id': context.get('dead_agent_id', -1),
+                'dead_suspicions': context.get('dead_suspicions', {})
+            }
+
             if role == "imposter":
-                prompt_context['alive_agents'] = valid_suspects
-            # Format the prompt template with safe defaults and message history
-            if role == "imposter" and hasattr(self.llm, 'generate_imposter_prompt'):
-                prompt_template = self.llm.generate_imposter_prompt(agent.unique_id, context.get('trace_content', ''), prompt_context)
-            elif role == "crewmate" and hasattr(self.llm, 'generate_crewmate_prompt'):
-                prompt_template = self.llm.generate_crewmate_prompt(agent.unique_id, context.get('trace_content', ''), prompt_context)
-            else:
-                prompt_template = self.prompts[role]["user"].format(
-                    messages=message_history,
-                    trace_content=context.get('trace_content', ''),
-                    dead_agent_id=context.get('dead_agent_id', 'Unknown'),
-                    death_location=context.get('death_location', 'Unknown'),
-                    dead_suspicions=context.get('dead_suspicions', {}),
-                    alive_crewmates=context.get('alive_crewmates', [])
+                prompt = self.llm.generate_imposter_prompt(
+                    agent.unique_id, trace_content, prompt_context
                 )
-            system_msg = self.prompts[role]["system"]
-            #print(f"[DEBUG] LLM prompt for Agent {agent.unique_id} (role={role}):\n{prompt_template}\n")
-            response = self.llm.query_llm(prompt_template, system_msg)
+            else:
+                prompt = self.llm.generate_crewmate_prompt(
+                    agent.unique_id, trace_content, prompt_context
+                )
+            system_msg = ""
+            response = self.llm.query_llm(prompt, system_msg)
             parsed_response = self.llm.parse_response(response)
             if parsed_response:
-                # Enforce that only alive, valid, non-self agents can be suspected
                 suspect_id = parsed_response.get("suspect", -1)
                 alive_ids = [a.unique_id for a in self.schedule.agents if a.alive]
-                # Determine valid agent IDs (assume 1-5 for 5 agents, or use min/max from current schedule)
                 all_agent_ids = [a.unique_id for a in self.schedule.agents]
                 min_id = min(all_agent_ids) if all_agent_ids else 1
                 max_id = max(all_agent_ids) if all_agent_ids else 5
                 valid_ids = set(range(min_id, max_id + 1))
-                # Check for invalid suspect
                 reason = None
                 if suspect_id not in alive_ids:
                     reason = "(LLM suggested dead agent; ignored)"
@@ -154,10 +148,10 @@ class AmongUsModel(Model):
                     parsed_response["suspect"] = -1
                     parsed_response["reason"] = reason
                     parsed_response["confidence"] = 0
-                print(f"Agent {agent.unique_id} argument: {parsed_response}")
             return parsed_response
         except Exception as e:
-            return None
+            print(f"Error generating argument: {str(e)}")
+            return {"suspect": -1, "reason": "Error", "confidence": 0}
 
     def is_valid_position(self, pos):
         """Check if position has a CellLabelAgent (valid room/hallway)"""
@@ -177,7 +171,7 @@ class AmongUsModel(Model):
         return "Hallway"
     
     def discussion_step(self):
-        """Process discussion phase with iterative messaging and natural context."""
+        """Process discussion phase with improved context"""
         self.message_queue = []
         self.votes = {}
         max_messages = 20
@@ -199,9 +193,16 @@ class AmongUsModel(Model):
         except Exception as e:
             print(f"Error removing dead agent: {e}")
 
-        # Prepare simpler context for LLM
+        # Collect dead agent's suspicions if available
+        dead_suspicions = {}
+        if hasattr(dead_agent, 'suspicion_pairs'):
+            dead_suspicions = dead_agent.suspicion_pairs
+
+        # Prepare enhanced context for LLM
         base_context = {
             'death_location': death_location,
+            'dead_agent_id': dead_agent.unique_id,
+            'dead_suspicions': dead_suspicions,
             'alive_crewmates': [a.unique_id for a in self.schedule.agents 
                               if isinstance(a, Crewmate) and a.alive],
             'messages': []
@@ -213,27 +214,24 @@ class AmongUsModel(Model):
             for agent in self.random.sample(alive_agents, len(alive_agents)):
                 if len(self.message_queue) >= max_messages:
                     break
-                # Read individual trace file (optional, can be added to context if needed)
                 trace_content = ""
                 try:
                     with open(f"agent_{agent.unique_id}_trace.log", "r") as f:
                         trace_content = f.read()[-1000:]
                 except FileNotFoundError:
                     pass
-                # Update context with current messages and trace
                 context = base_context.copy()
                 context['messages'] = self.message_queue.copy()
                 context['trace_content'] = trace_content
-                # Generate argument considering previous messages
                 argument = self.generate_argument(agent, context)
-                # Only add valid arguments (suspect != -1) to message_queue
                 if argument and "suspect" in argument and argument["suspect"] != -1:
-                    self.message_queue.append({
+                    msg = {
                         'sender': agent.unique_id,
                         'content': argument,
                         'is_imposter': isinstance(agent, Imposter)
-                    })
-                    # Process vote (with weight based on message order)
+                    }
+                    print(f"[LLM] Agent {agent.unique_id} ({'Imposter' if isinstance(agent, Imposter) else 'Crewmate'}): {argument}")
+                    self.message_queue.append(msg)
                     self.process_vote(agent, argument)
                 else:
                     print(f"[DEBUG] Excluded invalid response from Agent {agent.unique_id}: {argument}")
