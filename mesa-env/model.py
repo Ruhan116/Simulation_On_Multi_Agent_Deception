@@ -99,9 +99,9 @@ class AmongUsModel(Model):
             max_id = max(all_agent_ids) if all_agent_ids else 5
             valid_ids = set(range(min_id, max_id + 1))
             alive_ids = [a.unique_id for a in self.schedule.agents if a.alive]
-            # Exclude self and just-killed agent from suspects
-            just_killed = context.get('dead_agent_id', None)
-            valid_suspects = [aid for aid in alive_ids if aid != agent.unique_id and aid != just_killed]
+            # Exclude self from suspects
+            valid_suspects = [uid for uid in alive_ids if uid != agent.unique_id and uid in valid_ids]
+            print(f"[DEBUG] Agent {agent.unique_id} valid suspects before LLM: {valid_suspects}")
             if not valid_suspects:
                 print(f"[DEBUG] No valid suspects for Agent {agent.unique_id}. Skipping LLM call.")
                 return {"suspect": -1, "reason": "No valid suspects available (all dead, self, or out of range)", "confidence": 0}
@@ -146,9 +146,7 @@ class AmongUsModel(Model):
                 valid_ids = set(range(min_id, max_id + 1))
                 # Check for invalid suspect
                 reason = None
-                if suspect_id == agent.unique_id:
-                    reason = "(LLM tried to incriminate itself; ignored)"
-                elif suspect_id not in alive_ids:
+                if suspect_id not in alive_ids:
                     reason = "(LLM suggested dead agent; ignored)"
                 elif suspect_id not in valid_ids:
                     reason = f"(LLM suggested agent outside valid range {min_id}-{max_id}; ignored)"
@@ -156,9 +154,7 @@ class AmongUsModel(Model):
                     parsed_response["suspect"] = -1
                     parsed_response["reason"] = reason
                     parsed_response["confidence"] = 0
-                    print(f"[WARNING] Agent {agent.unique_id} provided invalid suspect: {reason}")
-                else:
-                    print(f"Agent {agent.unique_id} argument: {parsed_response}")
+                print(f"Agent {agent.unique_id} argument: {parsed_response}")
             return parsed_response
         except Exception as e:
             return None
