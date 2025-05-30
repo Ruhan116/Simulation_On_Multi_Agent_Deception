@@ -9,6 +9,8 @@ import json
 import os
 from dotenv import load_dotenv
 import re
+from benchmark_manager import BenchmarkManager
+import uuid
 
 class AmongUsModel(Model):
     def __init__(self, width=20, height=20, num_agents=4, num_imposters=1, llm_type="gemini", llm_model="gemini-2.0-flash"):
@@ -42,6 +44,10 @@ class AmongUsModel(Model):
         self.game_over = False  # New game state flag
         self.winner = None  # "Crewmates" or "Imposter"
         self.running = True  # New game state flag
+
+        self.benchmark_manager = BenchmarkManager()
+        self.game_id = str(uuid.uuid4())
+        self.ejected_agents = []
         
         # Define rooms and hallways
         self.rooms = [
@@ -186,6 +192,16 @@ class AmongUsModel(Model):
             return
         death_location = self.get_room(dead_agent.pos)
 
+        game_context = {
+            'actual_imposters': [a.unique_id for a in self.schedule.agents if isinstance(a, Imposter)],
+            'innocent_players': [a.unique_id for a in self.schedule.agents if isinstance(a, Crewmate) and a.alive],
+            'dead_agent_id': dead_agent.unique_id,
+            'death_location': death_location
+        }
+        
+        # Store game context for deception analysis
+        self.current_game_context = game_context
+
         # Remove dead agent properly
         try:
             self.grid.remove_agent(dead_agent)
@@ -233,6 +249,13 @@ class AmongUsModel(Model):
                         'is_imposter': isinstance(agent, Imposter)
                     }
                     print(f"[LLM] Agent {agent.unique_id} ({'Imposter' if isinstance(agent, Imposter) else 'Crewmate'}): {argument}")
+                    
+                    current_room = self.get_room(agent.pos)
+                    self.benchmark_manager.record_statement(
+                        agent, argument, self.game_id, 
+                        self.schedule.steps, current_room, game_context
+                    )
+                    
                     self.message_queue.append(msg)
                     self.process_vote(agent, argument)
                 else:
@@ -298,6 +321,15 @@ class AmongUsModel(Model):
                 # Move ejected agent to a corner for visual indication
                 self.grid.move_agent(agent, (0, 0))
                 print(f"Agent {ejected_id} was ejected with {max_votes} votes!")
+                
+                self.ejected_agents.append(ejected_id)
+                
+                # Record ejection for suspicion accuracy
+                self.benchmark_manager.record_ejection(
+                    ejected_id, isinstance(agent, Imposter), 
+                    self.game_id, self.votes
+                )
+                
                 break
         
         self.reset_round()
@@ -305,6 +337,9 @@ class AmongUsModel(Model):
     def step(self):
         if self.game_over:
             self.running = False  # Stop the simulation
+
+            self.benchmark_manager.record_game_completion(self, self.game_id)
+            self.running = False
             return
         
         if self.phase == "tasks":
@@ -359,3 +394,22 @@ class AmongUsModel(Model):
             self.winner = "Crewmates"
             print("GAME OVER - Crewmates win! All tasks have been completed.")
             return
+        
+    def _prepare_agent_context(self, agent, game_context):
+        """Prepare context for agent including game state"""
+        # Get trace content
+        trace_content = ""
+        try:
+            with open(f"agent_{agent.unique_id}_trace.log", "r") as f:
+                trace_content = f.read()[-1000:]
+        except FileNotFoundError:
+            pass
+        
+        context = game_context.copy()
+        context.update({
+            'valid_suspects': [a.unique_id for a in self.schedule.agents if a.alive and a.unique_id != agent.unique_id],
+            'messages': self.message_queue.copy(),
+            'trace_content': trace_content
+        })
+        
+        return context
