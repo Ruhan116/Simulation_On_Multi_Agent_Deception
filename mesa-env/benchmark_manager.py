@@ -1,5 +1,3 @@
-# benchmark_system.py - Comprehensive benchmarking system for multi-agent LLM deception
-
 import json
 import sqlite3
 import numpy as np
@@ -12,6 +10,7 @@ from dataclasses import dataclass
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import joblib
+from trace_analyzer import TraceAnalyzer
 
 @dataclass
 class GameResult:
