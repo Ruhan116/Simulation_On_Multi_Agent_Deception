@@ -2,4 +2,4 @@ mesa==1.2.1
 openai
 dotenv
 google-generativeai
-google
+scikit-learn
