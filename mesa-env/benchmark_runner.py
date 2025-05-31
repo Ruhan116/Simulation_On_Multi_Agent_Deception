@@ -27,45 +27,42 @@ class CompleteBenchmarkRunner:
                 {'type': 'groq', 'model': 'llama3-70b-8192'},
                 {'type': 'mistral', 'model': 'mistral-large-latest'}
             ]
-        
-        total_games = len(llm_configs) * num_games_per_llm
-        game_count = 0
-        
+
+        results = []
         for llm_cfg in llm_configs:
+            # Clear the database before each LLM config
+            self.benchmark_manager.clear_database()
+
             llm_type = llm_cfg['type']
             llm_model = llm_cfg['model']
             print(f"\n=== Benchmarking {llm_type} ({llm_model}) ({num_games_per_llm} games) ===")
-            
+
+            total_games = num_games_per_llm
+            game_count = 0
+
             for game_num in range(num_games_per_llm):
                 game_count += 1
                 print(f"Game {game_count}/{total_games} - {llm_type} ({llm_model}) #{game_num + 1}")
-                
                 try:
-                    # Create model with current LLM type and model
                     model = AmongUsModel(
                         num_agents=4, 
                         num_imposters=1, 
                         llm_type=llm_type,
                         llm_model=llm_model
                     )
-                    
-                    # Run game
                     self._run_single_game(model)
-                    
-                    # Clean up
                     self._cleanup_game_files(model)
-                    
-                    # Progress update every 10 games
                     if game_count % 10 == 0:
                         self._print_progress_report(game_count, total_games)
-                        
                 except Exception as e:
                     print(f"Error in game {game_count}: {str(e)}")
                     continue
-        
-        # Generate final report
-        final_report = self.generate_final_report()
-        return final_report
+
+            # Generate and print/save report for this LLM
+            final_report = self.generate_final_report()
+            results.append(final_report)
+
+        return results
     
     def _run_single_game(self, model):
         """Run a single game to completion"""
@@ -185,13 +182,6 @@ class CompleteBenchmarkRunner:
         print(f"  Crewmate: {win_rates.get('crewmate', 0):.1%}")
         print(f"  Total Games: {win_rates.get('total_games', 0)}")
         
-        # Deception metrics
-        deception = report.get('deception_metrics', {})
-        print(f"\nDECEPTION METRICS:")
-        print(f"  Imposter Deception Rate: {deception.get('imposter_deception_rate', 0):.1%}")
-        print(f"  Crewmate False Accusation Rate: {deception.get('crewmate_false_accusation_rate', 0):.1%}")
-        print(f"  Accusation Accuracy: {deception.get('accusation_accuracy', 0):.1%}")
-        
         # Speech classification
         speech_class = report.get('speech_classification', {})
         overall_dist = speech_class.get('overall_distribution', {})
@@ -226,7 +216,7 @@ if __name__ == "__main__":
         num_games_per_llm=1,
         llm_configs=[
             # {'type': 'mistral', 'model': 'mistral-large-latest'},
-            {'type': 'gemini', 'model': 'gemini-2.0-flash'},
-            # {'type': 'groq', 'model': 'llama3-70b-8192'}
+            # {'type': 'gemini', 'model': 'gemini-2.0-flash'},
+            {'type': 'groq', 'model': 'llama3-70b-8192'}
         ]
     )
