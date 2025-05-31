@@ -282,12 +282,7 @@ class DeceptionAnalyzer:
     
     def _extract_room_claims(self, content: str) -> List[str]:
         """Extract room names mentioned in statements"""
-        # Common room names in Among Us
-        rooms = [
-            'cafeteria', 'weapons', 'navigation', 'shields', 'hallway',
-            'engine', 'reactor', 'security', 'medbay', 'electrical',
-            'storage', 'communications', 'admin', 'oxygen'
-        ]
+        rooms = ['cafeteria', 'weapons', 'navigation', 'shields', 'hallway']
         
         claimed_rooms = []
         content_lower = content.lower()
