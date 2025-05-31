@@ -84,13 +84,23 @@ class BenchmarkDatabase:
         conn.commit()
         conn.close()
 
-    def clear_database(self):
-        """Delete all data from games and statements tables."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM statements")
-            cursor.execute("DELETE FROM games")
-            conn.commit()
+    def clear_database(self, retries=5, delay=1.0):
+        """Delete all data from games and statements tables, with retry on lock."""
+        for attempt in range(retries):
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM statements")
+                    cursor.execute("DELETE FROM games")
+                    conn.commit()
+                return
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower():
+                    print(f"Database is locked, retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    raise
+        raise RuntimeError("Failed to clear database after multiple retries due to lock.")
 
 class WinRateTracker:
     """Track win rates for different roles and LLM types"""

@@ -59,7 +59,7 @@ class CompleteBenchmarkRunner:
                     continue
 
             # Generate and print/save report for this LLM
-            final_report = self.generate_final_report()
+            final_report = self.generate_final_report(llm_type=llm_type, llm_model=llm_model)
             results.append(final_report)
 
         return results
@@ -125,7 +125,7 @@ class CompleteBenchmarkRunner:
             for speech_type, freq in speech_dist.items():
                 print(f"  {speech_type}: {freq:.1%}")
     
-    def generate_final_report(self):
+    def generate_final_report(self, llm_type=None, llm_model=None):
         """Generate comprehensive final benchmark report"""
         print("\n=== GENERATING FINAL BENCHMARK REPORT ===")
         
@@ -136,11 +136,18 @@ class CompleteBenchmarkRunner:
         report['metadata'] = {
             'generation_time': datetime.now().isoformat(),
             'total_games': self._count_total_games(),
-            'llm_types_tested': self._get_tested_llm_types()
+            'llm_types_tested': self._get_tested_llm_types(),
+            'llm_type': llm_type,
+            'llm_model': llm_model
         }
         
-        # Save to file
-        filename = f"comprehensive_benchmark_report_{int(time.time())}.json"
+        # Use llm_type and llm_model in the filename if provided
+        name_part = ""
+        if llm_type and llm_model:
+            name_part = f"{llm_type}_{llm_model}_"
+        elif llm_type:
+            name_part = f"{llm_type}_"
+        filename = f"comprehensive_benchmark_report_{name_part}{int(time.time())}.json"
         with open(filename, 'w') as f:
             json.dump(report, f, indent=2)
         
@@ -215,8 +222,8 @@ if __name__ == "__main__":
     results = runner.run_comprehensive_benchmark(
         num_games_per_llm=1,
         llm_configs=[
-            # {'type': 'mistral', 'model': 'mistral-large-latest'},
-            # {'type': 'gemini', 'model': 'gemini-2.0-flash'},
+            {'type': 'mistral', 'model': 'mistral-large-latest'},
+            {'type': 'gemini', 'model': 'gemini-2.0-flash'},
             {'type': 'groq', 'model': 'llama3-70b-8192'}
         ]
     )
