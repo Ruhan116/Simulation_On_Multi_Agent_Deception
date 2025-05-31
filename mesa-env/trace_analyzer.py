@@ -1,15 +1,36 @@
 import re
 import json
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
-from collections import defaultdict, deque
+from typing import Dict, List, Tuple, Optional, Union
+from collections import defaultdict
 import numpy as np
+from pathlib import Path
 
 class TraceAnalyzer:
     """Analyzes agent movement trace logs to verify location claims and detect deception"""
     
-    def __init__(self):
+    def __init__(self, log_directory: str = ".", room_mappings: Optional[Dict] = None):
+        self.log_directory = Path(log_directory)
+        # Updated room mappings for your grid
         self.room_mappings = {
+            'cafeteria': ['cafeteria'],
+            'weapons': ['weapons', 'weapon', 'armory'],
+            'navigation': ['navigation', 'nav', 'helm'],
+            'shields': ['shields', 'shield', 'defense'],
+            'hallway': ['hallway', 'corridor']  # All hallways use same name
+        }
+        # Pattern for parsing trace log entries
+        self.trace_pattern = re.compile(
+            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - Agent (\d+): (.+)'
+        )
+        self.movement_pattern = re.compile(r'moved to position \((\d+), (\d+)\)')
+        self.room_pattern = re.compile(r'entered (.+?) room')
+        self.task_pattern = re.compile(r'(started|completed) task (.+?) in (.+)')
+        self.interaction_pattern = re.compile(r'interacted with (.+)')
+    
+    def _get_default_room_mappings(self) -> Dict:
+        """Return default room name mappings"""
+        return {
             'cafeteria': ['cafeteria', 'cafe', 'eating area'],
             'weapons': ['weapons', 'weapon', 'armory'],
             'navigation': ['navigation', 'nav', 'helm'],
@@ -21,17 +42,108 @@ class TraceAnalyzer:
             'electrical': ['electrical', 'electric', 'wiring'],
             'storage': ['storage', 'supplies', 'warehouse']
         }
+    
+    def load_trace_content(self, agent_id: int) -> str:
+        """Load trace content for an agent"""
+        trace_file = self.log_directory / f"agent_{agent_id}_trace.log"
+        try:
+            with trace_file.open('r') as f:
+                return f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Trace log not found for agent {agent_id}")
+    
+    def parse_trace_log(self, trace_content: str, agent_id: int) -> Dict:
+        """Parse trace log content and extract structured movement data"""
+        if not trace_content.strip():
+            return self._empty_trace_data(agent_id)
         
-        # Pattern for parsing trace log entries
-        self.trace_pattern = re.compile(
-            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - Agent (\d+): (.+)'
-        )
+        movements = []
+        rooms_visited = []
+        tasks_performed = []
+        interactions = []
+        timeline = []
+        room_timestamps = defaultdict(list)
         
-        # Movement patterns
-        self.movement_pattern = re.compile(r'moved to position \((\d+), (\d+)\)')
-        self.room_pattern = re.compile(r'entered (.+?) room')
-        self.task_pattern = re.compile(r'(started|completed) task (.+?) in (.+)')
-        self.interaction_pattern = re.compile(r'interacted with (.+)')
+        for line in trace_content.strip().split('\n'):
+            parsed_action = self._parse_line(line, agent_id)
+            if not parsed_action:
+                continue
+            
+            timeline.append(parsed_action)
+            
+            # Track movements
+            if parsed_action['type'] == 'movement':
+                movements.append(parsed_action)
+                if 'room' in parsed_action:
+                    room_name = parsed_action['room']
+                    rooms_visited.append(room_name)
+                    room_timestamps[room_name].append(parsed_action['timestamp'])
+            
+            # Track tasks
+            elif parsed_action['type'] == 'task':
+                tasks_performed.append(parsed_action)
+                if 'location' in parsed_action:
+                    room_timestamps[parsed_action['location']].append(parsed_action['timestamp'])
+            
+            # Track interactions
+            elif parsed_action['type'] == 'interaction':
+                interactions.append(parsed_action)
+        
+        # Calculate time spent in each room
+        time_in_rooms = self._calculate_room_durations(room_timestamps)
+        
+        return {
+            'agent_id': agent_id,
+            'movements': movements,
+            'rooms_visited': rooms_visited,
+            'recent_rooms': self._get_recent_rooms(rooms_visited),
+            'tasks_performed': tasks_performed,
+            'interactions': interactions,
+            'timeline': timeline,
+            'time_in_rooms': time_in_rooms,
+            'movement_patterns': self._analyze_movement_patterns(movements),
+            'total_movements': len(movements),
+            'unique_rooms': len(set(rooms_visited))
+        }
+    
+    def _empty_trace_data(self, agent_id: int) -> Dict:
+        """Return empty trace data structure"""
+        return {
+            'agent_id': agent_id,
+            'movements': [],
+            'rooms_visited': [],
+            'recent_rooms': [],
+            'tasks_performed': [],
+            'interactions': [],
+            'timeline': [],
+            'time_in_rooms': {},
+            'movement_patterns': {},
+            'total_movements': 0,
+            'unique_rooms': 0
+        }
+    
+    def _parse_line(self, line: str, agent_id: int) -> Optional[Dict]:
+        """Parse a single line of trace log"""
+        match = self.trace_pattern.match(line)
+        if not match:
+            return None
+            
+        timestamp_str, parsed_agent_id, action = match.groups()
+        
+        # Skip if this isn't the right agent
+        if int(parsed_agent_id) != agent_id:
+            return None
+        
+        try:
+            timestamp = datetime.fromisoformat(timestamp_str)
+        except ValueError:
+            timestamp = datetime.now()
+        
+        return self._parse_action(action, timestamp)
+    
+    def _get_recent_rooms(self, rooms_visited: List[str], n: int = 5) -> List[str]:
+        """Get last n unique rooms visited"""
+        return list(dict.fromkeys(rooms_visited[-10:]))[-n:]
     
     def parse_trace_log(self, trace_content: str, agent_id: int) -> Dict:
         """Parse trace log content and extract structured movement data"""
@@ -181,16 +293,23 @@ class TraceAnalyzer:
         }
     
     def _position_to_room(self, x: int, y: int) -> str:
-        """Convert grid position to room name (simplified mapping)"""
-        # This is a simplified room mapping - you should adjust based on your grid layout
-        if x < 5:
+        """Convert grid position to room name based on model.py coordinates"""
+        if 1 <= x <= 8 and 1 <= y <= 8:
             return 'cafeteria'
-        elif x < 10:
-            return 'weapons' if y < 10 else 'navigation'
-        elif x < 15:
-            return 'shields' if y < 10 else 'engine'
-        else:
+        elif 11 <= x <= 18 and 1 <= y <= 8:
+            return 'weapons'
+        elif 1 <= x <= 8 and 11 <= y <= 18:
+            return 'navigation'
+        elif 11 <= x <= 18 and 11 <= y <= 18:
+            return 'shields'
+        # All hallway areas
+        elif (9 <= x <= 10 and 3 <= y <= 6) or \
+             (9 <= x <= 10 and 13 <= y <= 16) or \
+             (3 <= x <= 6 and 9 <= y <= 10) or \
+             (13 <= x <= 16 and 9 <= y <= 10):
             return 'hallway'
+        else:
+            return 'unknown'  # For positions outside defined areas
     
     def _normalize_room_name(self, room_name: str) -> str:
         """Normalize room name to standard format"""
@@ -290,20 +409,19 @@ class TraceAnalyzer:
                             time_window_minutes: int = 5) -> Dict:
         """Verify if an agent's location claim matches their trace log"""
         try:
-            with open(f"agent_{agent_id}_trace.log", "r") as f:
-                trace_content = f.read()
-        except FileNotFoundError:
+            trace_content = self.load_trace_content(agent_id)
+        except FileNotFoundError as e:
             return {
                 'verified': False,
                 'confidence': 0.0,
-                'reason': 'No trace log found',
+                'reason': str(e),
                 'evidence': []
             }
         
         trace_data = self.parse_trace_log(trace_content, agent_id)
         normalized_claim = self._normalize_room_name(claimed_room)
         
-        # Check recent rooms
+        # Check recent rooms (last 5 unique rooms)
         recent_rooms = trace_data['recent_rooms']
         if normalized_claim in recent_rooms:
             return {
@@ -483,3 +601,11 @@ class TraceAnalyzer:
             room_counts[room] = room_counts.get(room, 0) + 1
         
         return sorted(room_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    
+    def set_room_mappings(self, mappings: Dict):
+        """Update room name mappings"""
+        self.room_mappings = mappings
+    
+    def set_log_directory(self, directory: str):
+        """Update log directory"""
+        self.log_directory = Path(directory)

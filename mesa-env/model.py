@@ -3,7 +3,7 @@ from mesa.time import RandomActivation
 from mesa.space import MultiGrid
 from agents import Crewmate, Imposter
 from call_label_agent import CellLabelAgent
-from llm_benchmark import OpenAILoader, GeminiLoader, GroqLoader
+from llm_benchmark import OpenAILoader, GeminiLoader, GroqLoader, MistralAILoader
 import random
 import json
 import os
@@ -13,7 +13,7 @@ from benchmark_manager import BenchmarkManager
 import uuid
 
 class AmongUsModel(Model):
-    def __init__(self, width=20, height=20, num_agents=4, num_imposters=1, llm_type="gemini", llm_model="gemini-2.0-flash"):
+    def __init__(self, width=20, height=20, num_agents=4, num_imposters=1, llm_type="mistral", llm_model="mistral-large-latest"):
         super().__init__()
         # Load environment variables
         load_dotenv()
@@ -27,6 +27,8 @@ class AmongUsModel(Model):
             self.llm = GeminiLoader(os.getenv("GEMINI_KEY"))
         elif llm_type == "groq":
             self.llm = GroqLoader(os.getenv("GROQ_API_KEY"), model=llm_model)
+        elif llm_type == "mistral":
+            self.llm = MistralAILoader(os.getenv("MISTRAL_API_KEY"), model=llm_model)
         else:
             raise ValueError(f"Unsupported LLM type: {llm_type}")
         
@@ -62,8 +64,13 @@ class AmongUsModel(Model):
         ]
         print(f"Initialized AmongUsModel with {num_agents} agents and {num_imposters} imposters.")
         # Initialize agents with room-specific tasks
+        self.original_imposters = []  # ADD THIS
+        self.original_crewmates = []
+
+
         for _ in range(num_agents):
             agent = Crewmate(self.next_id(), self)
+            self.original_crewmates.append(agent.unique_id) 
             self.schedule.add(agent)
             room = random.choice(self.rooms[:4])  # Only place in main rooms
             x = random.randint(room[0], room[2])
@@ -75,8 +82,10 @@ class AmongUsModel(Model):
             #     Task(f"{room[4]} Task 2", (random.randint(room[0], room[2]), random.randint(room[1], room[3])))
             # ]
             
+        
         for _ in range(num_imposters):
             agent = Imposter(self.next_id(), self)
+            self.original_imposters.append(agent.unique_id)
             self.schedule.add(agent)
             room = random.choice(self.rooms[:4])  # Only place in main rooms
             x = random.randint(room[0], room[2])
@@ -318,26 +327,22 @@ class AmongUsModel(Model):
         for agent in self.schedule.agents:
             if agent.unique_id == ejected_id:
                 agent.alive = False
-                # Move ejected agent to a corner for visual indication
                 self.grid.move_agent(agent, (0, 0))
+                self.ejected_agents.append(ejected_id)  # ADD THIS LINE
                 print(f"Agent {ejected_id} was ejected with {max_votes} votes!")
-                
-                self.ejected_agents.append(ejected_id)
                 
                 # Record ejection for suspicion accuracy
                 self.benchmark_manager.record_ejection(
                     ejected_id, isinstance(agent, Imposter), 
                     self.game_id, self.votes
                 )
-                
                 break
         
         self.reset_round()
 
     def step(self):
         if self.game_over:
-            self.running = False  # Stop the simulation
-
+            # Record game completion immediately
             self.benchmark_manager.record_game_completion(self, self.game_id)
             self.running = False
             return
@@ -370,15 +375,15 @@ class AmongUsModel(Model):
         # 1) Win by elimination
         if alive_imposters == 0:
             self.game_over = True
-            self.running = False  # Stop the simulation
             self.winner = "Crewmates"
-            print("GAME OVER - Crewmates win by eliminating all imposters!")
+            print("Game Over: Crewmates win by eliminating all imposters!")
+            self.benchmark_manager.record_game_completion(self, self.game_id)
             return
         if alive_crewmates == 0:
             self.game_over = True
-            self.running = False  # Stop the simulation
             self.winner = "Imposter"
-            print("GAME OVER - Imposter wins by eliminating all crewmates!")
+            print("Game Over: Imposter wins by eliminating all crewmates!")
+            self.benchmark_manager.record_game_completion(self, self.game_id)
             return
 
         # 2) Win by task completion
@@ -390,9 +395,9 @@ class AmongUsModel(Model):
         )
         if all_tasks_done:
             self.game_over = True
-            self.running = False  # Stop the simulation
             self.winner = "Crewmates"
-            print("GAME OVER - Crewmates win! All tasks have been completed.")
+            print("Game Over: Crewmates win by completing all tasks!")
+            self.benchmark_manager.record_game_completion(self, self.game_id)
             return
         
     def _prepare_agent_context(self, agent, game_context):

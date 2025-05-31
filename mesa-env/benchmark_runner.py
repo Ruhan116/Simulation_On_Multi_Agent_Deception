@@ -3,6 +3,9 @@ import time
 from model import AmongUsModel
 from benchmark_manager import BenchmarkManager
 from datetime import datetime
+import uuid
+from agents import Imposter
+
 
 class CompleteBenchmarkRunner:
     def __init__(self):
@@ -11,25 +14,39 @@ class CompleteBenchmarkRunner:
     
     def run_comprehensive_benchmark(self, 
                                    num_games_per_llm=50, 
-                                   llm_types=['gemini', 'openai', 'groq']):
-        """Run comprehensive benchmark across multiple LLMs"""
+                                   llm_configs=None):
+        """
+        Run comprehensive benchmark across multiple LLMs.
+        llm_configs: list of dicts, each with keys 'type' and 'model', e.g.
+            [{'type': 'gemini', 'model': 'gemini-2.0-flash'}, ...]
+        """
+        if llm_configs is None:
+            llm_configs = [
+                {'type': 'gemini', 'model': 'gemini-2.0-flash'},
+                {'type': 'openai', 'model': 'gpt-3.5-turbo'},
+                {'type': 'groq', 'model': 'llama3-70b-8192'},
+                {'type': 'mistral', 'model': 'mistral-large-latest'}
+            ]
         
-        total_games = len(llm_types) * num_games_per_llm
+        total_games = len(llm_configs) * num_games_per_llm
         game_count = 0
         
-        for llm_type in llm_types:
-            print(f"\n=== Benchmarking {llm_type} ({num_games_per_llm} games) ===")
+        for llm_cfg in llm_configs:
+            llm_type = llm_cfg['type']
+            llm_model = llm_cfg['model']
+            print(f"\n=== Benchmarking {llm_type} ({llm_model}) ({num_games_per_llm} games) ===")
             
             for game_num in range(num_games_per_llm):
                 game_count += 1
-                print(f"Game {game_count}/{total_games} - {llm_type} #{game_num + 1}")
+                print(f"Game {game_count}/{total_games} - {llm_type} ({llm_model}) #{game_num + 1}")
                 
                 try:
-                    # Create model with current LLM
+                    # Create model with current LLM type and model
                     model = AmongUsModel(
                         num_agents=4, 
                         num_imposters=1, 
-                        llm_type=llm_type
+                        llm_type=llm_type,
+                        llm_model=llm_model
                     )
                     
                     # Run game
@@ -52,17 +69,22 @@ class CompleteBenchmarkRunner:
     
     def _run_single_game(self, model):
         """Run a single game to completion"""
-        max_steps = 1000  # Prevent infinite games
+        max_steps = 1000
         step_count = 0
-        
+
+        # Initialize benchmark manager in model
+        model.benchmark_manager = self.benchmark_manager
+
+        model.game_id = str(uuid.uuid4())
+
         while model.running and step_count < max_steps:
             model.step()
             step_count += 1
-            
+
             # Add delay for API rate limiting
             if step_count % 5 == 0:
                 time.sleep(0.2)
-        
+
         if model.running:
             print(f"Game timed out after {max_steps} steps")
             # Force game completion for benchmarking
@@ -98,8 +120,13 @@ class CompleteBenchmarkRunner:
         # Get current benchmark stats
         current_stats = self.benchmark_manager.calculate_all_benchmarks()
         print(f"Current Win Rates: {current_stats.get('win_rates', {})}")
-        print(f"Avg Lying Frequency: {current_stats.get('lying_frequency', {}).get('overall', 0):.3f}")
-        print(f"Avg Suspicion Accuracy: {current_stats.get('suspicion_accuracy', {}).get('overall', 0):.3f}")
+        
+        # Print speech distribution properly
+        speech_dist = current_stats.get('speech_classification', {}).get('overall_distribution', {})
+        if speech_dist:
+            print("Current Speech Distribution:")
+            for speech_type, freq in speech_dist.items():
+                print(f"  {speech_type}: {freq:.1%}")
     
     def generate_final_report(self):
         """Generate comprehensive final benchmark report"""
@@ -158,38 +185,48 @@ class CompleteBenchmarkRunner:
         print(f"  Crewmate: {win_rates.get('crewmate', 0):.1%}")
         print(f"  Total Games: {win_rates.get('total_games', 0)}")
         
-        # Elo ratings
-        deception_elo = report.get('deception_elo', {})
-        detection_elo = report.get('detection_elo', {})
-        print(f"\nELO RATINGS:")
-        print(f"  Avg Deception Elo: {deception_elo.get('mean', 1500):.0f}")
-        print(f"  Avg Detection Elo: {detection_elo.get('mean', 1500):.0f}")
-        
         # Deception metrics
-        lying_freq = report.get('lying_frequency', {})
-        truth_rate = report.get('truth_telling_rate', {})
+        deception = report.get('deception_metrics', {})
         print(f"\nDECEPTION METRICS:")
-        print(f"  Lying Frequency: {lying_freq.get('overall', 0):.1%}")
-        print(f"  Truth-telling Rate: {truth_rate.get('overall', 1):.1%}")
-        
-        # Accuracy
-        accuracy = report.get('suspicion_accuracy', {})
-        print(f"\nACCURACY METRICS:")
-        print(f"  Suspicion Accuracy: {accuracy.get('overall', 0):.1%}")
+        print(f"  Imposter Deception Rate: {deception.get('imposter_deception_rate', 0):.1%}")
+        print(f"  Crewmate False Accusation Rate: {deception.get('crewmate_false_accusation_rate', 0):.1%}")
+        print(f"  Accusation Accuracy: {deception.get('accusation_accuracy', 0):.1%}")
         
         # Speech classification
         speech_class = report.get('speech_classification', {})
         overall_dist = speech_class.get('overall_distribution', {})
-        print(f"\nSPEECH CLASSIFICATION:")
+        print(f"\nSPEECH DISTRIBUTION:")
         for speech_type, freq in overall_dist.items():
             print(f"  {speech_type}: {freq:.1%}")
         
         print("="*60)
+    
+    def _analyze_game_statements(self, model, game_id: str):
+        """Analyze all statements from a completed game"""
+        # Ensure model.trace_logs exists and is a list of step logs
+        for step_log in getattr(model, "trace_logs", []):
+            for entry in step_log.get("statements", []):
+                agent = model.get_agent_by_id(entry['agent_id'])
+                self.record_statement(
+                    agent=agent,
+                    argument=entry,
+                    game_id=game_id,
+                    step=entry.get("step", 0),
+                    room=entry.get("room", ""),
+                    game_context={
+                        'actual_imposters': [a.unique_id for a in model.schedule.agents if isinstance(a, Imposter)],
+                        'innocent_players': [a.unique_id for a in model.schedule.agents if not isinstance(a, Imposter)]
+                    }
+                )
 
 # Usage example:
 if __name__ == "__main__":
     runner = CompleteBenchmarkRunner()
     results = runner.run_comprehensive_benchmark(
-        num_games_per_llm=25,  # Start with smaller number for testing
-        llm_types=['gemini']   # Start with one LLM for testing
+        num_games_per_llm=1,
+        llm_configs=[
+            # {'type': 'mistral', 'model': 'mistral-large-latest'},
+            {'type': 'gemini', 'model': 'gemini-2.0-flash'},
+            # {'type': 'groq', 'model': 'llama3-70b-8192'}
+        ]
     )
