@@ -99,7 +99,7 @@ class Crewmate(PlayerAgent):
         trace_line = f"Step {self.model.schedule.steps}: "
         trace_line += f"Alive({self.alive}), "
         trace_line += f"Pos({self.pos}), "
-        trace_line += f"Visible: {[a.unique_id for a in visible_agents if a != self]}"
+        trace_line += f"Visible: {[a.unique_id for a in visible_agents if a != self and isinstance(a, (Crewmate, Imposter))]}"
         
         self._trace_file.write(trace_line + "\n")
         self._trace_file.flush()

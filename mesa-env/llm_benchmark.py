@@ -9,35 +9,73 @@ class LLMAdapter(ABC):
     def query_llm(self, prompt: str, system_message: str = None) -> str:
         pass
 
+    VALID_STATEMENT_TYPES = {
+        'accusation', 'defense', 'alibi', 'observation', 'vote_request'
+    }
+
     @staticmethod
     def parse_response(response: str) -> dict:
+        def _infer_fallback_type(text: str) -> str:
+            text = text.lower()
+            if any(word in text for word in ['vote', 'eject', 'kick out']):
+                return 'vote_request'
+            elif any(word in text for word in ['saw', 'notice', 'observed']):
+                return 'observation'
+            elif any(word in text for word in ['with me', 'together', 'alibi']):
+                return 'alibi'
+            elif any(word in text for word in ['defend', 'innocent', 'wrong']):
+                return 'defense'
+            return 'accusation'
+
         try:
+            # Remove markdown code block markers if present
+            response = re.sub(r"^```json|```$", "", response, flags=re.MULTILINE).strip()
+            # Try to extract JSON object from the response
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            if match:
+                response = match.group(0)
             # Handle Gemini's weird array responses
             if response.startswith('['):
                 first_item = json.loads(response)[0]
-                return {
+                parsed = {
                     "suspect": first_item.get("suspect", -1),
                     "reason": first_item.get("reason", ""),
-                    "confidence": first_item.get("confidence", 50)
+                    "confidence": first_item.get("confidence", 50),
+                    "statement_type": first_item.get("statement_type", "observation")
                 }
-                
-            # Normal JSON parsing with markdown cleanup
-            clean = re.sub(r'^```json|```$', '', response, flags=re.MULTILINE).strip()
-            parsed = json.loads(clean)
-            return {
-                "suspect": parsed.get("suspect", -1),
-                "reason": parsed.get("reason", ""),
-                "confidence": parsed.get("confidence", 50)
-            }
+            else:
+                parsed_json = json.loads(response)
+                parsed = {
+                    "suspect": parsed_json.get("suspect", -1),
+                    "reason": parsed_json.get("reason", ""),
+                    "confidence": parsed_json.get("confidence", 50),
+                    "statement_type": parsed_json.get("statement_type", "observation")
+                }
+            # Validate statement_type
+            stype = str(parsed.get("statement_type", "observation")).lower()
+            if stype not in LLMAdapter.VALID_STATEMENT_TYPES:
+                stype = _infer_fallback_type(parsed.get("reason", ""))
+            parsed["statement_type"] = stype
+            return parsed
         except Exception as e:
-            print(f"Final fallback parsing for: {response}")
-            # Robust regex extraction
-            suspect = re.findall(r'\b\d+\b', response)
+            print(f"Error parsing response: {str(e)}")
             return {
-                "suspect": int(suspect[0]) if suspect else -1,
-                "reason": "Automatic parse",
-                "confidence": 50
+                "suspect": -1,
+                "reason": "(Invalid or unparsable LLM response)",
+                "confidence": 0,
+                "statement_type": "observation"
             }
+
+    GENERAL_RULES = """
+GENERAL RULES:
+1. You may ONLY reference:
+   - Agents you've actually seen (from Visible: lists)
+   - Rooms you've actually been in
+   - Pairs of agents you've seen together
+2. Our ship only has these rooms: Cafeteria, Weapons, Navigation, Shields, Hallway
+3. Never mention non-existent rooms or systems
+4. Your statements must be directly supported by your trace log
+"""
 
     def generate_crewmate_prompt(self, agent_id, trace_content, context):
         """Robust prompt for crewmates with self-defense capabilities"""
@@ -65,14 +103,21 @@ DEFENSE MODE ACTIVATED:
 - Use your observations as evidence of your innocence
 - Point out inconsistencies in accusations against you
 """
-        return f"""As Crewmate Agent {agent_id}, analyze this data and respond ONLY in valid JSON:
+        return f"""
+As Crewmate Agent {agent_id}, analyze this data and respond in STRICT JSON format:
 {{
-    \"observations\": \"{trace_content[-1000:]}\",
-    \"dead_agent\": {context['dead_agent_id']},
-    \"location\": \"{context['death_location']}\",
-    \"suspicions\": {context.get('dead_suspicions', {})},
-    \"valid_suspects\": {valid_suspects},
-    \"discussion_history\": \"{message_history}\"
+    "suspect": [number from valid_suspects],
+    "reason": "...",
+    "confidence": 0-100,
+    "statement_type": "accusation|defense|alibi|observation|vote_request"
+}}
+
+RULES FOR STATEMENT TYPE:
+- Use "accusation" when directly accusing another agent
+- Use "defense" when defending yourself or others
+- Use "alibi" when providing your whereabouts
+- Use "observation" when stating neutral facts
+- Use "vote_request" when explicitly asking others to vote
 }}
 {defense_mode}
 IMPORTANT INSTRUCTIONS:
@@ -83,10 +128,21 @@ IMPORTANT INSTRUCTIONS:
 
 Response format:
 {{
-    \"suspect\": [number from valid_suspects],
-    \"reason\": \"...\",
-    \"confidence\": 0-100
-}}"""
+    "suspect": [number from valid_suspects],
+    "reason": "...",
+    "confidence": 0-100,
+    "statement_type": "accusation|defense|alibi|observation|vote_request"
+}}
+
+RULES FOR STATEMENT TYPE:
+- Use "accusation" when directly accusing another agent
+- Use "defense" when defending yourself or others
+- Use "alibi" when providing your whereabouts
+- Use "observation" when stating neutral facts
+- Use "vote_request" when explicitly asking others to vote
+"""
+        # Add general rules to the prompt
+        + self.GENERAL_RULES
 
     def generate_imposter_prompt(self, agent_id, trace_content, context):
         """Structured prompt for imposters with self-defense capabilities"""
@@ -114,12 +170,21 @@ DEFENSE MODE ACTIVATED:
 - Create a convincing alibi consistent with your previous statements
 - Subtly redirect suspicion to others
 """
-        return f"""As Imposter Agent {agent_id}, create deception using this data:
+        return f"""
+As Imposter Agent {agent_id}, create deception using this data:
 {{
-    \"alibi\": \"{trace_content[-500:]}\",
-    \"location\": \"{context['death_location']}\",
-    \"valid_suspects\": {valid_suspects},
-    \"discussion_history\": \"{message_history}\"
+    "suspect": [number from valid_suspects], 
+    "reason": "...", 
+    "confidence": 0-100,
+    "statement_type": "accusation|defense|alibi|observation|vote_request"
+}}
+
+RULES FOR STATEMENT TYPE:
+- Use "accusation" when directly accusing another agent
+- Use "defense" when defending yourself or others
+- Use "alibi" when providing your whereabouts
+- Use "observation" when stating neutral facts
+- Use "vote_request" when explicitly asking others to vote
 }}
 {defense_mode}
 IMPORTANT INSTRUCTIONS:
@@ -131,10 +196,21 @@ IMPORTANT INSTRUCTIONS:
 
 Response format:
 {{
-    \"suspect\": [number from valid_suspects], 
-    \"reason\": \"...\", 
-    \"confidence\": 0-100
-}}"""
+    "suspect": [number from valid_suspects], 
+    "reason": "...", 
+    "confidence": 0-100,
+    "statement_type": "accusation|defense|alibi|observation|vote_request"
+}}
+
+RULES FOR STATEMENT TYPE:
+- Use "accusation" when directly accusing another agent
+- Use "defense" when defending yourself or others
+- Use "alibi" when providing your whereabouts
+- Use "observation" when stating neutral facts
+- Use "vote_request" when explicitly asking others to vote
+"""
+        # Add general rules to the prompt
+        + self.GENERAL_RULES
 
 class OpenAILoader(LLMAdapter):
     def __init__(self, api_key: str, model: str = "gpt-3.5-turbo"):
