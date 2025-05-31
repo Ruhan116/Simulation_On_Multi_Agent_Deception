@@ -222,7 +222,7 @@ if __name__ == "__main__":
     results = runner.run_comprehensive_benchmark(
         num_games_per_llm=10,
         llm_configs=[
-            {'type': 'mistral', 'model': 'mistral-large-latest'},
+            # {'type': 'mistral', 'model': 'mistral-large-latest'},
             {'type': 'gemini', 'model': 'gemini-2.5-flash'},
             {'type': 'gemini', 'model': 'gemini-2.0-flash'},
             {'type': 'groq', 'model': 'llama3-70b-8192'}
