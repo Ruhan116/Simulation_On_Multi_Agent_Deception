@@ -1,5 +1,11 @@
 mesa==1.2.1
 openai
-dotenv
+python-dotenv
 google-generativeai
 scikit-learn
+pandas
+numpy
+tqdm
+requests
+mistralai
+groq
