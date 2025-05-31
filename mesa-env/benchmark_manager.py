@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import joblib
-from trace_analyzer import TraceAnalyzer
 from agents import Imposter 
 
 @dataclass
@@ -85,6 +84,24 @@ class BenchmarkDatabase:
         conn.commit()
         conn.close()
 
+    def clear_database(self, retries=5, delay=1.0):
+        """Delete all data from games and statements tables, with retry on lock."""
+        for attempt in range(retries):
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM statements")
+                    cursor.execute("DELETE FROM games")
+                    conn.commit()
+                return
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower():
+                    print(f"Database is locked, retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    raise
+        raise RuntimeError("Failed to clear database after multiple retries due to lock.")
+
 class WinRateTracker:
     """Track win rates for different roles and LLM types"""
     
@@ -153,7 +170,6 @@ class DeceptionAnalyzer:
             'suspicious', 'acting weird', 'following', 'lying', 'fake',
             'imposter', 'vote', 'eject', 'guilty'
         ]
-        self.trace_analyzer = TraceAnalyzer()
     
     def analyze_statement_truthfulness(self, statement: Statement, game_context: Dict) -> Dict[str, any]:
         """Analyze if a statement is deceptive based on context"""
@@ -266,12 +282,7 @@ class DeceptionAnalyzer:
     
     def _extract_room_claims(self, content: str) -> List[str]:
         """Extract room names mentioned in statements"""
-        # Common room names in Among Us
-        rooms = [
-            'cafeteria', 'weapons', 'navigation', 'shields', 'hallway',
-            'engine', 'reactor', 'security', 'medbay', 'electrical',
-            'storage', 'communications', 'admin', 'oxygen'
-        ]
+        rooms = ['cafeteria', 'weapons', 'navigation', 'shields', 'hallway']
         
         claimed_rooms = []
         content_lower = content.lower()
@@ -527,7 +538,6 @@ class BenchmarkManager:
         self.deception_analyzer = DeceptionAnalyzer(self.db)
         self.speech_classifier = SpeechClassifier()
         self.suspicion_tracker = SuspicionAccuracyTracker(self.db)
-        self.trace_analyzer = TraceAnalyzer()
     
     def record_game_completion(self, model, game_id: str):
         """Record a completed game and update all benchmarks"""
@@ -619,8 +629,6 @@ class BenchmarkManager:
         """Generate comprehensive benchmark report"""
         report = {
             'win_rates': self.win_tracker.get_win_rates(llm_type),
-            # Remove 'elo_ratings' entry
-            'deception_metrics': self._get_deception_summary(),
             'speech_classification': self._get_speech_summary(),
             'suspicion_accuracy': self._get_suspicion_summary(),
             'timestamp': datetime.now().isoformat()
@@ -955,3 +963,7 @@ class BenchmarkManager:
         
         conn.close()
         return agent_stats
+
+    def clear_database(self):
+        """Proxy to clear the underlying database."""
+        self.db.clear_database()

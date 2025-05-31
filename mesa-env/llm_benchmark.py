@@ -207,7 +207,7 @@ class GroqLoader(LLMAdapter):
         self.api_key = api_key
         self.model = model
         self._last_call_time = 0
-        self._min_interval = 4.0  
+        self._min_interval = 10.0
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
 
     def query_llm(self, prompt: str, system_message: str = None) -> str:
