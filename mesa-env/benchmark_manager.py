@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import joblib
-from agents import Imposter 
+from agents import Crewmate, Imposter 
 import time
 import gc
 

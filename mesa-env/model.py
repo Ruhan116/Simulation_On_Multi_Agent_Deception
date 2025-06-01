@@ -13,7 +13,7 @@ from benchmark_manager import BenchmarkManager
 import uuid
 
 class AmongUsModel(Model):
-    def __init__(self, width=20, height=20, num_agents=4, num_imposters=1, llm_type="mistral", llm_model="mistral-large-latest"):
+    def __init__(self, width=20, height=20, num_agents=4, num_imposters=1, llm_type="openai", llm_model="gpt-3.5-turbo"):
         super().__init__()
         # Load environment variables
         load_dotenv()
@@ -343,7 +343,7 @@ class AmongUsModel(Model):
     def step(self):
         if self.game_over:
             # Record game completion immediately
-            self.benchmark_manager.record_game_completion(self, self.game_id)
+            #self.benchmark_manager.record_game_completion(self, self.game_id)
             self.running = False
             return
         
@@ -379,7 +379,8 @@ class AmongUsModel(Model):
             print("Game Over: Crewmates win by eliminating all imposters!")
             self.benchmark_manager.record_game_completion(self, self.game_id)
             return
-        if alive_crewmates == 0:
+        if alive_crewmates <= 1 and alive_imposters > 0:
+            # If only one crewmate left, imposters win
             self.game_over = True
             self.winner = "Imposter"
             print("Game Over: Imposter wins by eliminating all crewmates!")

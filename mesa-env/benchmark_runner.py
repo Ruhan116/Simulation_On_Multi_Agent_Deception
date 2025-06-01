@@ -216,15 +216,15 @@ class CompleteBenchmarkRunner:
                     }
                 )
 
-# Usage example:
 if __name__ == "__main__":
     runner = CompleteBenchmarkRunner()
     results = runner.run_comprehensive_benchmark(
-        num_games_per_llm=1,
+        num_games_per_llm=20,
         llm_configs=[
-            # {'type': 'mistral', 'model': 'mistral-large-latest'},
-            {'type': 'gemini', 'model': 'gemini-2.5-flash'},
-            {'type': 'gemini', 'model': 'gemini-2.0-flash'},
-            # {'type': 'groq', 'model': 'llama3-70b-8192'}
+            #{'type': 'mistral', 'model': 'mistral-large-latest'},
+            #{'type': 'gemini', 'model': 'gemini-2.5-flash'},
+            #{'type': 'gemini', 'model': 'gemini-2.0-flash'},
+            #{'type': 'groq', 'model': 'llama3-70b-8192'},
+            {'type': 'openai', 'model': 'gpt-3.5-turbo'}
         ]
     )
