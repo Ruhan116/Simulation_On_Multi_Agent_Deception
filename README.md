@@ -106,9 +106,6 @@ The benchmarking system evaluates:
 
 Results are saved as JSON files in the `outputs` directory.
 
-## License
-
-[Include license information here]
 
 ## Acknowledgements
 
